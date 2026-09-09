@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>KTV Smart Scorer</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <header class="app-header">
+    <h1 class="app-title">🎵 KTV Smart Scorer</h1>
+    <div class="controls">
+      <button id="start-stop-btn" class="start-stop-btn" aria-label="開始演唱">
+        🎤 開始演唱
+      </button>
+    </div>
+  </header>
+
+  <main class="app-main">
+    <section class="canvas-section" aria-label="音高視覺化">
+      <canvas id="pitch-canvas" aria-label="即時音高顯示畫布">
+        Your browser does not support HTML5 Canvas.
+      </canvas>
+    </section>
+
+    <section id="lyric-container" class="lyric-container" aria-label="歌詞顯示區">
+    </section>
+
+    <aside id="debug-panel" class="debug-panel" aria-label="偵錯資訊面板">
+      <div class="debug-row">
+        <span class="debug-label">音符</span>
+        <span id="debug-note" class="debug-value">—</span>
+      </div>
+      <div class="debug-row">
+        <span class="debug-label">頻率</span>
+        <span id="debug-hz" class="debug-value">— Hz</span>
+      </div>
+      <div class="debug-row">
+        <span class="debug-label">得分</span>
+        <span id="debug-score" class="debug-value">0</span>
+      </div>
+      <div class="debug-row">
+        <span class="debug-label">判定</span>
+        <span id="debug-hit" class="debug-value">—</span>
+      </div>
+    </aside>
+  </main>
+
+  <!-- Error Overlay -->
+  <div id="error-overlay" class="error-overlay" role="alertdialog" aria-modal="true" aria-labelledby="error-message" hidden>
+    <div class="error-card">
+      <p id="error-message" class="error-message"></p>
+      <button id="error-dismiss" class="error-dismiss-btn">關閉</button>
+    </div>
+  </div>
+
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>

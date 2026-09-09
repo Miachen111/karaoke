@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Canvas Renderer — Property Tests</title>
+  <style>
+    body {
+      font-family: monospace;
+      background: #111;
+      color: #eee;
+      padding: 2rem;
+      max-width: 900px;
+      margin: 0 auto;
+    }
+    h1 { color: #4fc3f7; margin-bottom: 0.25rem; }
+    .subtitle { color: #888; font-size: 0.85rem; margin-bottom: 1.5rem; }
+    .suite { border-left: 3px solid #2a5298; padding-left: 1rem; margin-bottom: 0.75rem; }
+    .pass { color: #4caf50; }
+    .fail { color: #f44336; }
+    .info { color: #aaa; font-size: 0.85rem; margin-top: 0.2rem; }
+    pre {
+      background: #1e1e1e; padding: 0.75rem; border-radius: 4px;
+      overflow-x: auto; font-size: 0.8rem; white-space: pre-wrap; word-break: break-word;
+    }
+    #summary {
+      margin-top: 2rem; font-size: 1.1rem; font-weight: bold;
+      padding: 0.75rem 1rem; border-radius: 6px;
+    }
+    .summary-pass { background: #1a3a1a; color: #4caf50; }
+    .summary-fail { background: #3a1a1a; color: #f44336; }
+  </style>
+</head>
+<body>
+  <h1>ktv-smart-scorer — Canvas Renderer Property Tests</h1>
+  <p class="subtitle">
+    Task 7.3 &nbsp;|&nbsp; Property 10 — MIDI-to-Y Coordinate Linearity
+    &nbsp;|&nbsp; Validates: Requirement 9.6
+  </p>
+
+  <div id="output"></div>
+  <div id="summary"></div>
+
+  <script type="module">
+    import fc from 'https://cdn.jsdelivr.net/npm/fast-check/+esm';
+
+    // -------------------------------------------------------------------------
+    // midiToY — mirrors the exact formula from canvasRenderer.js (internal
+    // helper). Tested here in isolation because it is not exported.
+    //
+    // Formula (from design.md Requirement 9.6):
+    //   y = height - ((midi - midiMin) / (midiMax - midiMin)) * height
+    //
+    // Semantics: higher MIDI value → lower Y number → higher position on screen.
+    // -------------------------------------------------------------------------
+    function midiToY(midi, height, midiMin, midiMax) {
+      return height - ((midi - midiMin) / (midiMax - midiMin)) * height;
+    }
+
+    // -------------------------------------------------------------------------
+    // Minimal test runner
+    // -------------------------------------------------------------------------
+    const results = [];
+
+    async function test(label, description, fn) {
+      const entry = { label, description, status: 'pass', detail: '' };
+      try { await fn(); }
+      catch (err) { entry.status = 'fail'; entry.detail = err?.message ?? String(err); }
+      results.push(entry);
+      render();
+    }
+
+    function render() {
+      const out = document.getElementById('output');
+      out.innerHTML = results.map(r => `
+        <div class="suite">
+          <div>
+            <span class="${r.status === 'pass' ? 'pass' : 'fail'}">
+              ${r.status === 'pass' ? '✓' : '✗'} ${escHtml(r.label)}
+            </span>
+          </div>
+          <div class="info">${escHtml(r.description)}</div>
+          ${r.detail ? `<pre>${escHtml(r.detail)}</pre>` : ''}
+        </div>
+      `).join('');
+
+      const passed = results.filter(r => r.status === 'pass').length;
+      const total  = results.length;
+      const sum = document.getElementById('summary');
+      sum.className = passed === total ? 'summary-pass' : 'summary-fail';
+      sum.textContent = passed === total
+        ? `ALL TESTS PASSED (${passed}/${total})`
+        : `TESTS FAILED: ${passed}/${total} passed`;
+    }
+
+    function escHtml(str) {
+      return String(str)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    // -------------------------------------------------------------------------
+    // Unit tests — known reference values
+    // -------------------------------------------------------------------------
+
+    await test(
+      'Unit: midiMin maps to canvas bottom (y = height)',
+      'midiToY(midiMin, height, midiMin, midiMax) === height. Validates: Requirement 9.6',
+      () => {
+        const h = 300, min = 48, max = 84;
+        const y = midiToY(min, h, min, max);
+        if (y !== h) throw new Error(`Expected y=${h}, got y=${y}`);
+      }
+    );
+
+    await test(
+      'Unit: midiMax maps to canvas top (y = 0)',
+      'midiToY(midiMax, height, midiMin, midiMax) === 0. Validates: Requirement 9.6',
+      () => {
+        const h = 300, min = 48, max = 84;
+        const y = midiToY(max, h, min, max);
+        if (y !== 0) throw new Error(`Expected y=0, got y=${y}`);
+      }
+    );
+
+    await test(
+      'Unit: mid-range MIDI maps to canvas centre',
+      'midiToY(midpoint, height, midiMin, midiMax) === height / 2. Validates: Requirement 9.6',
+      () => {
+        const h = 300, min = 48, max = 84;
+        const mid = (min + max) / 2; // 66
+        const y = midiToY(mid, h, min, max);
+        if (y !== h / 2) throw new Error(`Expected y=${h / 2}, got y=${y}`);
+      }
+    );
+
+    await test(
+      'Unit: y values are in [0, height] for MIDI values in [midiMin, midiMax]',
+      'All in-range MIDI values produce Y coordinates within the canvas bounds. Validates: Requirement 9.6',
+      () => {
+        const h = 300, min = 48, max = 84;
+        for (let midi = min; midi <= max; midi++) {
+          const y = midiToY(midi, h, min, max);
+          if (y < 0 || y > h) {
+            throw new Error(`midi=${midi} produced out-of-bounds y=${y} (expected [0, ${h}])`);
+          }
+        }
+      }
+    );
+
+    // -------------------------------------------------------------------------
+    // Property 10: MIDI-to-Y Coordinate Linearity (strict monotonic decrease)
+    //
+    // For any two MIDI values m1 < m2 both in [midiMin, midiMax]:
+    //   midiToY(m1) > midiToY(m2)
+    // (higher pitch = lower Y = higher position on screen)
+    //
+    // Also verifies the mapping is exactly linear.
+    //
+    // Validates: Requirement 9.6
+    // -------------------------------------------------------------------------
+
+    await test(
+      'Property 10: Strict Monotonic Decrease — higher MIDI → lower Y (1000 runs)',
+      'For any m1 < m2 in [midiMin, midiMax]: midiToY(m1) > midiToY(m2). Higher pitch = higher on screen. Validates: Requirement 9.6',
+      async () => {
+        await fc.assert(
+          fc.property(
+            // midiMin in [0, 100], midiMax in [midiMin+1, 127]
+            fc.integer({ min: 0, max: 100 }).chain(midiMin =>
+              fc.integer({ min: midiMin + 1, max: 127 }).map(midiMax => ({ midiMin, midiMax }))
+            ),
+            // canvas height in [1, 2000]
+            fc.integer({ min: 1, max: 2000 }),
+            // m1 and m2: two distinct values within [midiMin, midiMax]
+            fc.integer({ min: 0, max: 126 }).chain(offset1 =>
+              fc.integer({ min: offset1 + 1, max: 127 }).map(offset2 => ({ offset1, offset2 }))
+            ),
+            ({ midiMin, midiMax }, height, { offset1, offset2 }) => {
+              // Map offsets into the [midiMin, midiMax] range
+              const range = midiMax - midiMin;
+              const m1 = midiMin + (offset1 % range);
+              const m2 = midiMin + (offset2 % range);
+
+              // Both must be strictly within range and m1 < m2
+              if (m1 >= m2 || m1 < midiMin || m2 > midiMax) return true; // skip degenerate
+
+              const y1 = midiToY(m1, height, midiMin, midiMax);
+              const y2 = midiToY(m2, height, midiMin, midiMax);
+
+              if (y1 <= y2) {
+                throw new Error(
+                  `midiToY(${m1})=${y1.toFixed(4)} should be > midiToY(${m2})=${y2.toFixed(4)} ` +
+                  `(midiMin=${midiMin}, midiMax=${midiMax}, height=${height})`
+                );
+              }
+              return true;
+            }
+          ),
+          { numRuns: 1000 }
+        );
+      }
+    );
+
+    await test(
+      'Property 10: Linearity — equal MIDI steps produce equal Y steps (500 runs)',
+      'The MIDI-to-Y mapping is linear: equal semitone differences produce equal pixel differences. Validates: Requirement 9.6',
+      async () => {
+        await fc.assert(
+          fc.property(
+            fc.integer({ min: 12, max: 127 }), // midiMax (at least 12 above 0)
+            fc.integer({ min: 1, max: 2000 }),  // height
+            (midiMax, height) => {
+              const midiMin = 0;
+              // Three equally-spaced MIDI values: a, b=a+step, c=a+2*step
+              const step = Math.floor(midiMax / 3);
+              if (step < 1) return true; // skip if range too small
+              const a = 0;
+              const b = step;
+              const c = step * 2;
+              if (c > midiMax) return true;
+
+              const yA = midiToY(a, height, midiMin, midiMax);
+              const yB = midiToY(b, height, midiMin, midiMax);
+              const yC = midiToY(c, height, midiMin, midiMax);
+
+              const diff1 = yA - yB; // going up by one step
+              const diff2 = yB - yC; // going up by another step
+
+              // Due to floating-point arithmetic, allow an epsilon of 1e-9
+              if (Math.abs(diff1 - diff2) > 1e-9) {
+                throw new Error(
+                  `Non-linear mapping: step(a→b)=${diff1.toFixed(8)} vs step(b→c)=${diff2.toFixed(8)} ` +
+                  `(midiMax=${midiMax}, height=${height})`
+                );
+              }
+              return true;
+            }
+          ),
+          { numRuns: 500 }
+        );
+      }
+    );
+
+    await test(
+      'Property 10: Y output always in [0, height] for valid MIDI inputs (1000 runs)',
+      'No in-range MIDI value produces a Y coordinate outside the canvas. Validates: Requirement 9.6',
+      async () => {
+        await fc.assert(
+          fc.property(
+            fc.integer({ min: 0, max: 100 }).chain(midiMin =>
+              fc.integer({ min: midiMin + 1, max: 127 }).map(midiMax => ({ midiMin, midiMax }))
+            ),
+            fc.integer({ min: 1, max: 2000 }),
+            ({ midiMin, midiMax }, height) => {
+              // Test every integer MIDI in [midiMin, midiMax]
+              for (let midi = midiMin; midi <= midiMax; midi++) {
+                const y = midiToY(midi, height, midiMin, midiMax);
+                if (y < 0 || y > height) {
+                  throw new Error(
+                    `y=${y.toFixed(4)} out of [0, ${height}] for midi=${midi} ` +
+                    `(midiMin=${midiMin}, midiMax=${midiMax})`
+                  );
+                }
+              }
+              return true;
+            }
+          ),
+          { numRuns: 1000 }
+        );
+      }
+    );
+
+    await test(
+      'Property 10: Continuous MIDI (midiExact) preserves ordering (500 runs)',
+      'Fractional MIDI values (e.g. 48.3 vs 48.7) also produce strictly ordered Y. Validates: Requirement 9.6',
+      async () => {
+        await fc.assert(
+          fc.property(
+            fc.float({ min: 0,  max: 100, noNaN: true }),  // midiMin
+            fc.float({ min: 101, max: 127, noNaN: true }), // midiMax
+            fc.integer({ min: 1, max: 2000 }),              // height
+            fc.float({ min: 0, max: 100, noNaN: true }),   // m1 (offset)
+            fc.float({ min: 0, max: 100, noNaN: true }),   // delta (always > 0)
+            (midiMin, midiMax, height, m1Offset, delta) => {
+              if (midiMax <= midiMin) return true;
+              const range = midiMax - midiMin;
+
+              const m1 = midiMin + (Math.abs(m1Offset) % range);
+              const m2 = m1 + (Math.abs(delta) % (midiMax - m1) || 0.001);
+
+              if (m2 > midiMax || m1 >= m2) return true; // skip degenerate
+
+              const y1 = midiToY(m1, height, midiMin, midiMax);
+              const y2 = midiToY(m2, height, midiMin, midiMax);
+
+              if (y1 <= y2) {
+                throw new Error(
+                  `Fractional: midiToY(${m1.toFixed(4)})=${y1.toFixed(4)} should be > ` +
+                  `midiToY(${m2.toFixed(4)})=${y2.toFixed(4)}`
+                );
+              }
+              return true;
+            }
+          ),
+          { numRuns: 500 }
+        );
+      }
+    );
+
+  </script>
+</body>
+</html>

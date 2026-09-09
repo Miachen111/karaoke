@@ -1,0 +1,7 @@
+[
+  { "start": 0,    "end": 1000, "pitch": 48, "note": "C3" },
+  { "start": 1000, "end": 2000, "pitch": 50, "note": "D3" },
+  { "start": 2000, "end": 3000, "pitch": 52, "note": "E3" },
+  { "start": 3000, "end": 4000, "pitch": 53, "note": "F3" },
+  { "start": 4000, "end": 5000, "pitch": 55, "note": "G3" }
+]

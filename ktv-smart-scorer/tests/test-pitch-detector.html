@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pitch Detector — Property Tests</title>
+  <style>
+    body {
+      font-family: monospace;
+      background: #111;
+      color: #eee;
+      padding: 2rem;
+      max-width: 900px;
+      margin: 0 auto;
+    }
+    h1 { color: #4fc3f7; margin-bottom: 0.25rem; }
+    h2 { color: #f0c040; margin-top: 2rem; margin-bottom: 0.5rem; }
+    .suite { border-left: 3px solid #2a5298; padding-left: 1rem; margin-bottom: 1rem; }
+    .pass { color: #4caf50; }
+    .fail { color: #f44336; }
+    .info { color: #aaa; font-size: 0.85rem; }
+    pre { background: #1e1e1e; padding: 0.75rem; border-radius: 4px; overflow-x: auto; font-size: 0.8rem; white-space: pre-wrap; word-break: break-word; }
+    #summary { margin-top: 2rem; font-size: 1.1rem; font-weight: bold; }
+    .badge-pass { background: #1b5e20; color: #4caf50; padding: 2px 8px; border-radius: 4px; }
+    .badge-fail { background: #b71c1c; color: #f44336; padding: 2px 8px; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <h1>ktv-smart-scorer — Pitch Detector Property Tests</h1>
+  <p class="info">Properties 8 &amp; 9 | Validates: Requirements 5.5, 5.6, 5.7</p>
+
+  <div id="output"></div>
+  <div id="summary"></div>
+
+  <script type="module">
+    import fc from 'https://cdn.jsdelivr.net/npm/fast-check/+esm';
+    import { detectPitch } from '../src/audio/pitchDetector.js';
+
+    // -------------------------------------------------------------------------
+    // Helpers
+    // -------------------------------------------------------------------------
+
+    /** Generates a pure sine-wave Float32Array at the given frequency. */
+    function makeSineBuffer(hz, sampleRate, numSamples) {
+      const buf = new Float32Array(numSamples);
+      for (let i = 0; i < numSamples; i++) {
+        buf[i] = Math.sin(2 * Math.PI * hz * i / sampleRate);
+      }
+      return buf;
+    }
+
+    // -------------------------------------------------------------------------
+    // Test runner (minimal, no deps)
+    // -------------------------------------------------------------------------
+
+    const results = [];
+
+    async function runTest(label, description, fn) {
+      const entry = { label, description, status: 'pass', detail: '' };
+      try {
+        await fn();
+        entry.status = 'pass';
+      } catch (err) {
+        entry.status = 'fail';
+        entry.detail = err && err.message ? err.message : String(err);
+      }
+      results.push(entry);
+      render();
+    }
+
+    function render() {
+      const out = document.getElementById('output');
+      out.innerHTML = results.map(r => `
+        <div class="suite">
+          <div>
+            <span class="${r.status === 'pass' ? 'pass' : 'fail'}">
+              ${r.status === 'pass' ? '✓' : '✗'} ${r.label}
+            </span>
+          </div>
+          <div class="info">${r.description}</div>
+          ${r.detail ? `<pre>${escHtml(r.detail)}</pre>` : ''}
+        </div>
+      `).join('');
+
+      const passed = results.filter(r => r.status === 'pass').length;
+      const total  = results.length;
+      const sum = document.getElementById('summary');
+      sum.innerHTML = `
+        <span class="${passed === total ? 'badge-pass' : 'badge-fail'}">
+          ${passed} / ${total} passed
+        </span>
+      `;
+    }
+
+    function escHtml(str) {
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+    }
+
+    // -------------------------------------------------------------------------
+    // Constants matching pitchDetector defaults
+    // -------------------------------------------------------------------------
+
+    const SAMPLE_RATE = 44100;
+    // Enough samples to detect the lowest frequency (80 Hz requires ≥ 2×(44100/80) ≈ 1103 samples)
+    const NUM_SAMPLES = 4096;
+    const DEFAULT_MIN_HZ = 80;
+    const DEFAULT_MAX_HZ = 1200;
+
+    // -------------------------------------------------------------------------
+    // Property 8: Autocorrelation Pitch Bounds
+    //
+    // For any non-null result returned by detectPitch():
+    //   1. result.hz ∈ [minHz, maxHz]
+    //   2. result.midi === Math.round(69 + 12 * log2(result.hz / 440))
+    //
+    // Validates: Requirements 5.5, 5.6
+    // -------------------------------------------------------------------------
+
+    await runTest(
+      'Property 8: Autocorrelation Pitch Bounds',
+      'For any non-null result: result.hz ∈ [minHz, maxHz] and result.midi === Math.round(69 + 12*log2(result.hz/440)). Validates: Requirements 5.5, 5.6',
+      async () => {
+        // Generate sine-wave buffers at frequencies that span the detectable range.
+        // We restrict to [100, 1000] Hz — comfortably inside [80, 1200] — so that
+        // autocorrelation has enough samples and clarity to return a non-null result.
+        const hzArbitrary = fc.float({ min: 100, max: 1000, noNaN: true });
+
+        await fc.assert(
+          fc.property(hzArbitrary, (hz) => {
+            const buffer = makeSineBuffer(hz, SAMPLE_RATE, NUM_SAMPLES);
+            const result = detectPitch(buffer, SAMPLE_RATE);
+
+            // If detectPitch returns null, the property is vacuously satisfied
+            // (Property 8 only constrains non-null results).
+            if (result === null) return true;
+
+            // 1. hz must be within [minHz, maxHz]
+            if (result.hz < DEFAULT_MIN_HZ || result.hz > DEFAULT_MAX_HZ) {
+              throw new Error(
+                `result.hz ${result.hz.toFixed(4)} is outside [${DEFAULT_MIN_HZ}, ${DEFAULT_MAX_HZ}] for input hz=${hz.toFixed(4)}`
+              );
+            }
+
+            // 2. midi must equal Math.round(69 + 12*log2(result.hz/440))
+            const expectedMidi = Math.round(69 + 12 * Math.log2(result.hz / 440));
+            if (result.midi !== expectedMidi) {
+              throw new Error(
+                `result.midi (${result.midi}) !== expected ${expectedMidi} for result.hz=${result.hz.toFixed(4)}`
+              );
+            }
+
+            return true;
+          }),
+          { numRuns: 200, verbose: true }
+        );
+      }
+    );
+
+    // -------------------------------------------------------------------------
+    // Property 8 (custom options): verify the same bounds hold when minHz/maxHz
+    // are explicitly supplied as non-default values.
+    // -------------------------------------------------------------------------
+
+    await runTest(
+      'Property 8 (custom bounds): Pitch Bounds with explicit minHz/maxHz',
+      'For any non-null result with custom options: result.hz ∈ [minHz, maxHz] and midi formula holds. Validates: Requirements 5.5, 5.6',
+      async () => {
+        // Generate (minHz, maxHz) pairs where minHz < maxHz, both within [80, 1200]
+        const optionsArbitrary = fc.tuple(
+          fc.float({ min: 80,  max: 500,  noNaN: true }),  // minHz
+          fc.float({ min: 600, max: 1200, noNaN: true })   // maxHz (always > minHz)
+        );
+
+        // Pick a sine frequency inside the custom [minHz, maxHz] window
+        await fc.assert(
+          fc.asyncProperty(optionsArbitrary, async ([minHz, maxHz]) => {
+            // Choose a sine frequency solidly inside the custom window
+            const midHz = (minHz + maxHz) / 2;
+            const buffer = makeSineBuffer(midHz, SAMPLE_RATE, NUM_SAMPLES);
+            const result = detectPitch(buffer, SAMPLE_RATE, { minHz, maxHz });
+
+            if (result === null) return true; // vacuously true
+
+            // Bounds check
+            if (result.hz < minHz || result.hz > maxHz) {
+              throw new Error(
+                `result.hz ${result.hz.toFixed(4)} outside [${minHz.toFixed(2)}, ${maxHz.toFixed(2)}]`
+              );
+            }
+
+            // MIDI formula check
+            const expectedMidi = Math.round(69 + 12 * Math.log2(result.hz / 440));
+            if (result.midi !== expectedMidi) {
+              throw new Error(
+                `result.midi (${result.midi}) !== expected ${expectedMidi} for result.hz=${result.hz.toFixed(4)}`
+              );
+            }
+
+            return true;
+          }),
+          { numRuns: 100, verbose: true }
+        );
+      }
+    );
+
+    // -------------------------------------------------------------------------
+    // Property 9: Input Buffer Immutability
+    //
+    // The contents of the buffer passed to detectPitch() shall be identical
+    // before and after the call, regardless of whether a pitch was detected.
+    //
+    // Validates: Requirements 5.7
+    // -------------------------------------------------------------------------
+
+    await runTest(
+      'Property 9: Input Buffer Immutability',
+      'Buffer contents are identical before and after detectPitch() regardless of detection result. Validates: Requirements 5.7',
+      async () => {
+        const hzArbitrary = fc.float({ min: 80, max: 1200, noNaN: true });
+
+        await fc.assert(
+          fc.property(hzArbitrary, (hz) => {
+            const buffer = makeSineBuffer(hz, SAMPLE_RATE, NUM_SAMPLES);
+
+            // Snapshot buffer contents before the call
+            const snapshot = buffer.slice(); // independent copy
+
+            detectPitch(buffer, SAMPLE_RATE);
+
+            // Every element must be unchanged
+            for (let i = 0; i < buffer.length; i++) {
+              if (buffer[i] !== snapshot[i]) {
+                throw new Error(
+                  `Buffer mutated at index ${i}: before=${snapshot[i]}, after=${buffer[i]} (input hz=${hz.toFixed(4)})`
+                );
+              }
+            }
+
+            return true;
+          }),
+          { numRuns: 200, verbose: true }
+        );
+      }
+    );
+
+    // -------------------------------------------------------------------------
+    // Property 9 (null-path): immutability holds even when detectPitch returns null
+    // (e.g. white-noise-like buffers where clarity threshold is not met)
+    // -------------------------------------------------------------------------
+
+    await runTest(
+      'Property 9 (null-path): Buffer Immutability when no pitch detected',
+      'Buffer is unchanged even when detectPitch() returns null (low-amplitude or no-signal buffer). Validates: Requirements 5.7',
+      async () => {
+        // Use a very-low-amplitude buffer (below RMS threshold / clarity threshold)
+        // and a near-DC frequency outside the pitch-detector range to force null.
+        const amplitudeArb = fc.float({ min: 0, max: 0.001, noNaN: true });
+
+        await fc.assert(
+          fc.property(amplitudeArb, (amplitude) => {
+            // Tiny amplitude sine — will have very low autocorrelation clarity
+            const buffer = new Float32Array(NUM_SAMPLES);
+            for (let i = 0; i < NUM_SAMPLES; i++) {
+              buffer[i] = amplitude * Math.sin(2 * Math.PI * 440 * i / SAMPLE_RATE);
+            }
+
+            const snapshot = buffer.slice();
+            const result = detectPitch(buffer, SAMPLE_RATE);
+
+            // We don't assert result === null here (amplitude=0.001 might still pass
+            // clarity), but immutability must hold regardless.
+            for (let i = 0; i < buffer.length; i++) {
+              if (buffer[i] !== snapshot[i]) {
+                throw new Error(
+                  `Buffer mutated at index ${i}: before=${snapshot[i]}, after=${buffer[i]} (amplitude=${amplitude}, result=${result})`
+                );
+              }
+            }
+
+            return true;
+          }),
+          { numRuns: 200, verbose: true }
+        );
+      }
+    );
+
+  </script>
+</body>
+</html>

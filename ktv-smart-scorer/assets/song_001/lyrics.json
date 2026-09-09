@@ -1,0 +1,23 @@
+[
+  {
+    "lineId": 1,
+    "text": "Do Re Mi Fa Sol",
+    "chars": [
+      { "char": "D",   "start": 0,    "end": 200  },
+      { "char": "o",   "start": 200,  "end": 1000 },
+      { "char": " ",   "start": 1000, "end": 1100 },
+      { "char": "R",   "start": 1000, "end": 1200 },
+      { "char": "e",   "start": 1200, "end": 2000 },
+      { "char": " ",   "start": 2000, "end": 2100 },
+      { "char": "M",   "start": 2000, "end": 2200 },
+      { "char": "i",   "start": 2200, "end": 3000 },
+      { "char": " ",   "start": 3000, "end": 3100 },
+      { "char": "F",   "start": 3000, "end": 3200 },
+      { "char": "a",   "start": 3200, "end": 4000 },
+      { "char": " ",   "start": 4000, "end": 4100 },
+      { "char": "S",   "start": 4000, "end": 4200 },
+      { "char": "o",   "start": 4200, "end": 4600 },
+      { "char": "l",   "start": 4600, "end": 5000 }
+    ]
+  }
+]
